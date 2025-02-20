@@ -2,25 +2,41 @@ package main
 
 import (
 	"log"
-	"net/http"
+	"os"
 
-	"crawler/db"
+	"crawler/database"
 	"crawler/handlers"
+
+	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	// Initialize the database.
-	database := db.InitDB("./crawl.db")
-	defer database.Close()
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, relying on system environment variables")
+	}
 
-	// Set up routes. Here we use http.ServeMux.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/crawl", handlers.StartCrawlHandler(database))
-	mux.HandleFunc("/jobs", handlers.ListJobsHandler(database))
-	// For job status and results, we expect a query parameter like ?id=JOB_ID.
-	mux.HandleFunc("/jobs/{id}/status", handlers.JobStatusHandler(database))
-	mux.HandleFunc("/jobs/{id}/results", handlers.JobResultsHandler(database))
+	// Initialize database
+	database.InitDatabase()
 
-	log.Println("Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	// Set up Gin router
+	router := gin.Default()
+
+	// Job routes
+	jobRoutes := router.Group("/jobs")
+	{
+		jobRoutes.POST("", handlers.StartCrawlHandler)
+		jobRoutes.GET("", handlers.ListJobsHandler)
+		jobRoutes.GET(":id/status", handlers.JobStatusHandler)
+		jobRoutes.GET(":id/results", handlers.JobResultsHandler)
+	}
+
+	// Start the server
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Printf("Server starting on :%s", port)
+	log.Fatal(router.Run(":" + port))
 }

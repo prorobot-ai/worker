@@ -1,59 +1,53 @@
 package crawler
 
 import (
-	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
+	"time"
+
+	"crawler/database"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
-// CrawlResult holds data extracted from a page.
-type CrawlResult struct {
-	URL     string
-	Title   string
-	Content string
-}
-
-// Crawler represents a single crawling job.
+// Crawler struct to manage crawl state
 type Crawler struct {
 	mu       sync.Mutex
 	wg       sync.WaitGroup
 	visited  map[string]bool
 	counter  int
 	MaxLinks int
-	JobID    string
+	JobID    uint
 	StartURL string
-	Results  []CrawlResult
-	DB       *sql.DB
 }
 
-// NewCrawler creates a new Crawler instance.
-func NewCrawler(startURL string, db *sql.DB) *Crawler {
+// NewCrawler initializes a new crawler instance
+func NewCrawler(jobID uint, startURL string, maxLinks int) *Crawler {
 	return &Crawler{
 		visited:  make(map[string]bool),
-		MaxLinks: 64,
+		MaxLinks: maxLinks,
+		JobID:    jobID,
 		StartURL: startURL,
-		Results:  make([]CrawlResult, 0),
-		DB:       db,
 	}
 }
 
-// Start begins the crawling process.
+// Start begins the crawling process
 func (c *Crawler) Start() {
+	log.Printf("Starting crawl job %d for URL: %s", c.JobID, c.StartURL)
+	database.UpdateJobStatus(c.JobID, "in_progress")
+
 	c.wg.Add(1)
 	go c.crawl(c.StartURL)
 	c.wg.Wait()
-	c.saveToDB()
+
+	database.UpdateJobStatus(c.JobID, "completed")
 }
 
-// crawl processes a single URL.
+// crawl processes a single URL
 func (c *Crawler) crawl(url string) {
 	defer c.wg.Done()
 
-	// Check if we've hit our link limit or already visited this URL.
 	c.mu.Lock()
 	if c.counter >= c.MaxLinks || c.visited[url] {
 		c.mu.Unlock()
@@ -61,7 +55,7 @@ func (c *Crawler) crawl(url string) {
 	}
 	c.visited[url] = true
 	c.counter++
-	fmt.Printf("Crawling (%d/%d): %s\n", c.counter, c.MaxLinks, url)
+	log.Printf("Crawling (%d/%d): %s", c.counter, c.MaxLinks, url)
 	c.mu.Unlock()
 
 	resp, err := http.Get(url)
@@ -78,17 +72,12 @@ func (c *Crawler) crawl(url string) {
 	}
 
 	title := doc.Find("title").Text()
-	content := doc.Find("body").Text()
+	metadata := map[string]interface{}{
+		"status":    resp.StatusCode,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	database.AddPage(c.JobID, url, title, doc.Text(), metadata)
 
-	c.mu.Lock()
-	c.Results = append(c.Results, CrawlResult{
-		URL:     url,
-		Title:   title,
-		Content: content,
-	})
-	c.mu.Unlock()
-
-	// Enqueue all found links.
 	doc.Find("a").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists {
@@ -105,37 +94,7 @@ func (c *Crawler) crawl(url string) {
 	})
 }
 
-// saveToDB stores the crawling results into the database.
-func (c *Crawler) saveToDB() {
-	tx, err := c.DB.Begin()
-	if err != nil {
-		log.Printf("Error starting transaction: %v", err)
-		return
-	}
-
-	stmt, err := tx.Prepare(`INSERT INTO crawl_results (job_id, url, title, content) VALUES (?, ?, ?, ?)`)
-	if err != nil {
-		log.Printf("Error preparing statement: %v", err)
-		tx.Rollback()
-		return
-	}
-	defer stmt.Close()
-
-	for _, result := range c.Results {
-		_, err := stmt.Exec(c.JobID, result.URL, result.Title, result.Content)
-		if err != nil {
-			log.Printf("Error inserting data: %v", err)
-			tx.Rollback()
-			return
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		log.Printf("Error committing transaction: %v", err)
-	}
-}
-
-// Counter safely returns the current number of processed links.
+// Counter safely returns the current number of processed links
 func (c *Crawler) Counter() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
