@@ -108,3 +108,11 @@ func ListJobsHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, jobs)
 }
+
+// StatusHandler responds with the health status of the API
+func StatusHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "online",
+		"message": "API is running",
+	})
+}

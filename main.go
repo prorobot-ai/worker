@@ -23,6 +23,9 @@ func main() {
 	// Set up Gin router
 	router := gin.Default()
 
+	// API Status route
+	router.GET("/status", handlers.StatusHandler) // ✅ Status handler route
+
 	// Job routes
 	jobRoutes := router.Group("/jobs")
 	{
