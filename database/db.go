@@ -78,7 +78,7 @@ func GetJob(jobID uint) (*Job, error) {
 // GetAllJobs retrieves all jobs
 func GetAllJobs() ([]Job, error) {
 	var jobs []Job
-	if err := DB.Preload("Pages").Find(&jobs).Error; err != nil {
+	if err := DB.Order("id DESC").Preload("Pages").Find(&jobs).Error; err != nil {
 		return nil, err
 	}
 	return jobs, nil
