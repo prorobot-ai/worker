@@ -1,31 +1,39 @@
-# Use an official Go runtime as the base image
+# Use Go runtime to build the binary
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
-# Copy go.mod and go.sum to download dependencies
+# Install required dependencies
+RUN apk add --no-cache git
+
+# Copy go.mod and go.sum first (for caching dependencies)
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the entire project and build it
+# Copy the rest of the source code
 COPY . .
-RUN go build -o crawler ./main.go
 
-# Use a minimal image for the final runtime
+# Build the binary with static linking
+RUN CGO_ENABLED=0 GOOS=linux go build -o crawler .
+
+# Use a minimal runtime image for production
 FROM alpine:latest
 
 # Set working directory
-WORKDIR /root/
+WORKDIR /app
 
-# Copy the built binary from the builder
+# Copy binary from the builder stage
 COPY --from=builder /app/crawler .
+
+# Ensure the binary is executable
+RUN chmod +x /app/crawler
 
 # Set environment variables
 ENV PORT=3005
 ENV GRPC_PORT=50051
 
-# Expose HTTP and gRPC ports
+# Expose ports
 EXPOSE 3005 50051
 
-# Start the application
-CMD ["./crawler"]
+# Run the application
+CMD ["/app/crawler"]
