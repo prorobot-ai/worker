@@ -3,9 +3,11 @@ package main
 import (
 	"log"
 	"os"
+	"sync"
 
 	"crawler/database"
 	"crawler/handlers"
+	"crawler/server"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -35,11 +37,26 @@ func main() {
 		jobRoutes.GET(":id/results", handlers.JobResultsHandler)
 	}
 
-	// Start the server
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	log.Printf("Server starting on :%s", port)
-	log.Fatal(router.Run(":" + port))
+	// Run both HTTP and gRPC servers concurrently
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		log.Printf("🌍 HTTP Server running on :%s", port)
+		if err := router.Run(":" + port); err != nil {
+			log.Fatalf("❌ HTTP Server failed: %v", err)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		server.StartGRPCServer() // ✅ Use the imported function
+	}()
+
+	wg.Wait()
 }

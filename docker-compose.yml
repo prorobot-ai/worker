@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crawler
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs/crawler:/app/logs
