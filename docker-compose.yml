@@ -11,3 +11,6 @@ services:
       - .env
     volumes:
       - ./logs/crawler:/app/logs
+    ports:
+      - "3005:3005"
+      - "50051:50051"
