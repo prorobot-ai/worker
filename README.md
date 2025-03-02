@@ -150,13 +150,6 @@ curl http://localhost:8080/jobs/1623751234567890000/results
 
 ### **5. Notes**
 
-- **Database**: The SQLite database (`crawl.db`) will be created in the same directory as the application. You can inspect it using SQLite tools:
-  ```bash
-  sqlite3 crawl.db
-  sqlite> .schema crawl_results
-  sqlite> SELECT * FROM crawl_results LIMIT 10;
-  ```
-
 - **Concurrency**: Multiple jobs can run simultaneously. Each job is tracked independently.
 
 - **Error Handling**: If a job ID is invalid or not found, the API will return a `404 Not Found` error.
