@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build the binary with static linking
-RUN CGO_ENABLED=0 GOOS=linux go build -o crawler .
+RUN CGO_ENABLED=0 GOOS=linux go build -o worker .
 
 # Use a minimal runtime image for production
 FROM alpine:latest
@@ -23,10 +23,10 @@ FROM alpine:latest
 WORKDIR /app
 
 # Copy binary from the builder stage
-COPY --from=builder /app/crawler .
+COPY --from=builder /app/worker .
 
 # Ensure the binary is executable
-RUN chmod +x /app/crawler
+RUN chmod +x /app/worker
 
 # Set environment variables
 ENV PORT=3005
@@ -36,4 +36,4 @@ ENV GRPC_PORT=50051
 EXPOSE 3005 50051
 
 # Run the application
-CMD ["/app/crawler"]
+CMD ["/app/worker"]

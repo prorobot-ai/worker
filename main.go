@@ -5,9 +5,9 @@ import (
 	"os"
 	"sync"
 
-	"crawler/database"
-	"crawler/handlers"
-	"crawler/server"
+	"worker/database"
+	"worker/handlers"
+	"worker/server"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -31,7 +31,7 @@ func main() {
 	// Job routes
 	jobRoutes := router.Group("/jobs")
 	{
-		jobRoutes.POST("", handlers.StartCrawlHandler)
+		jobRoutes.POST("", handlers.StartWorkerHandler)
 		jobRoutes.GET("", handlers.ListJobsHandler)
 		jobRoutes.GET(":id/status", handlers.JobStatusHandler)
 		jobRoutes.GET(":id/results", handlers.JobResultsHandler)

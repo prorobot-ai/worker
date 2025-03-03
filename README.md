@@ -1,6 +1,6 @@
-# ProRobot Crawler
+# ProRobot Worker
 
-A concurrent web crawler written in Go (Golang) designed to crawl websites efficiently while respecting basic crawling policies. The crawler stops automatically after crawling a specified number of links (default: 64).
+A concurrent web worker written in Go (Golang) designed to crawl websites efficiently while respecting basic crawling policies. The worker stops automatically after crawling a specified number of links (default: 64).
 
 ![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -15,7 +15,7 @@ A concurrent web crawler written in Go (Golang) designed to crawl websites effic
 
 ### **Testing Instructions**
 
-Below are step-by-step instructions to test the web crawler application.
+Below are step-by-step instructions to test the web worker application.
 
 ---
 
@@ -180,4 +180,4 @@ curl http://localhost:8080/jobs/1623751234567890000/results
 
 ---
 
-This testing guide ensures you can verify all functionality of the web crawler application. Let me know if you need further assistance! 🚀
+This testing guide ensures you can verify all functionality of the web worker application. Let me know if you need further assistance! 🚀

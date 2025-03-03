@@ -1,12 +1,12 @@
 package handlers
 
 import (
-	"crawler/crawler"
-	"crawler/database"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
+	"worker/database"
+	"worker/worker"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,11 +19,11 @@ type JobStatus struct {
 	Total     int    `json:"total"`
 }
 
-// 🏃 Active crawlers in memory
-var activeCrawlers sync.Map // map[string]*crawler.Crawler
+// 🏃 Active workers in memory
+var activeWorkers sync.Map // map[string]*worker.Worker
 
-// StartCrawlHandler starts a new crawling job.
-func StartCrawlHandler(c *gin.Context) {
+// StartWorkerHandler starts a new crawling job.
+func StartWorkerHandler(c *gin.Context) {
 	var request struct {
 		URL   string `json:"url"`
 		Depth int    `json:"depth"`
@@ -39,7 +39,7 @@ func StartCrawlHandler(c *gin.Context) {
 		return
 	}
 
-	config := crawler.CrawlerConfig{
+	config := worker.WorkerConfig{
 		MaxLinks:     64,
 		RequestDelay: 0 * time.Second, // 360 * time.Second
 		CustomHeaders: map[string]string{
@@ -47,11 +47,11 @@ func StartCrawlHandler(c *gin.Context) {
 		},
 	}
 
-	newCrawler := crawler.NewCrawler(job.ID, request.URL, config)
-	activeCrawlers.Store(job.ID, newCrawler)
+	newWorker := worker.NewWorker(job.ID, request.URL, config)
+	activeWorkers.Store(job.ID, newWorker)
 	go func() {
-		newCrawler.Start()
-		activeCrawlers.Delete(job.ID)
+		newWorker.Start()
+		activeWorkers.Delete(job.ID)
 	}()
 
 	c.JSON(http.StatusCreated, gin.H{"job_id": job.ID})
@@ -65,8 +65,8 @@ func JobStatusHandler(c *gin.Context) {
 		return
 	}
 
-	if val, exists := activeCrawlers.Load(uint(jobID)); exists {
-		cr := val.(*crawler.Crawler)
+	if val, exists := activeWorkers.Load(uint(jobID)); exists {
+		cr := val.(*worker.Worker)
 		processed, total := cr.GetStatus()
 		c.JSON(http.StatusOK, JobStatus{JobID: uint(jobID), Status: "running", Processed: processed, Total: total})
 		return
@@ -102,14 +102,14 @@ func JobResultsHandler(c *gin.Context) {
 func ListJobsHandler(c *gin.Context) {
 	var jobs []JobStatus // List to hold all job statuses (active + completed)
 
-	// ✅ Step 1: Track active jobs (crawlers)
+	// ✅ Step 1: Track active jobs (workers)
 	activeJobIDs := make(map[uint]bool) // Tracks active job IDs (as strings)
 
-	// Iterate over the active crawlers
-	activeCrawlers.Range(func(key, value interface{}) bool {
+	// Iterate over the active workers
+	activeWorkers.Range(func(key, value interface{}) bool {
 		jobID := key.(uint)                // Extract the job ID from the key
-		cr := value.(*crawler.Crawler)     // Type assertion to get the Crawler instance
-		processed, total := cr.GetStatus() // Get current crawling status from the Crawler
+		cr := value.(*worker.Worker)       // Type assertion to get the Worker instance
+		processed, total := cr.GetStatus() // Get current crawling status from the Worker
 
 		// Add active job details
 		jobs = append(jobs, JobStatus{

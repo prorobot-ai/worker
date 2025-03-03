@@ -1,4 +1,4 @@
-package crawler
+package worker
 
 import (
 	"log"
@@ -6,50 +6,50 @@ import (
 	"sync"
 	"time"
 
-	"crawler/database"
+	"worker/database"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
-// CrawlResult holds data extracted from a page.
-type CrawlResult struct {
+// WorkerResult holds data extracted from a page.
+type WorkerResult struct {
 	URL     string
 	Title   string
 	Content string
 }
 
-// CrawlerConfig allows custom configuration for the crawler.
-type CrawlerConfig struct {
+// WorkerConfig allows custom configuration for the worker.
+type WorkerConfig struct {
 	MaxLinks      int               // Maximum number of links to crawl
 	RequestDelay  time.Duration     // Delay between requests
 	CustomHeaders map[string]string // Optional HTTP headers for requests
 }
 
-// Crawler struct to manage crawl state
-type Crawler struct {
+// Worker struct to manage crawl state
+type Worker struct {
 	mu       sync.Mutex
 	wg       sync.WaitGroup
 	visited  map[string]bool
 	counter  int
-	Config   CrawlerConfig
+	Config   WorkerConfig
 	JobID    uint
 	StartURL string
-	Results  []CrawlResult
+	Results  []WorkerResult
 }
 
-// NewCrawler initializes a new crawler instance with custom config
-func NewCrawler(jobID uint, startURL string, config CrawlerConfig) *Crawler {
-	return &Crawler{
+// NewWorker initializes a new worker instance with custom config
+func NewWorker(jobID uint, startURL string, config WorkerConfig) *Worker {
+	return &Worker{
 		visited:  make(map[string]bool),
 		Config:   config,
 		JobID:    jobID,
 		StartURL: startURL,
-		Results:  make([]CrawlResult, 0),
+		Results:  make([]WorkerResult, 0),
 	}
 }
 
 // Start begins the crawling process
-func (c *Crawler) Start() {
+func (c *Worker) Start() {
 	log.Printf("Starting crawl job %d for URL: %s", c.JobID, c.StartURL)
 	database.UpdateJobStatus(c.JobID, "in_progress")
 
@@ -60,23 +60,23 @@ func (c *Crawler) Start() {
 	database.UpdateJobStatus(c.JobID, "completed")
 }
 
-// crawl processes a single URL
-func (c *Crawler) crawl(url string) {
-	defer c.wg.Done()
+// worker processes a single URL
+func (w *Worker) crawl(url string) {
+	defer w.wg.Done()
 
-	c.mu.Lock()
-	if c.counter >= c.Config.MaxLinks || c.visited[url] {
-		c.mu.Unlock()
+	w.mu.Lock()
+	if w.counter >= w.Config.MaxLinks || w.visited[url] {
+		w.mu.Unlock()
 		return
 	}
-	c.visited[url] = true
-	c.counter++
-	log.Printf("Crawling (%d/%d): %s", c.counter, c.Config.MaxLinks, url)
-	c.mu.Unlock()
+	w.visited[url] = true
+	w.counter++
+	log.Printf("Crawling (%d/%d): %s", w.counter, w.Config.MaxLinks, url)
+	w.mu.Unlock()
 
 	// Apply delay if set in configuration
-	if c.Config.RequestDelay > 0 {
-		time.Sleep(c.Config.RequestDelay)
+	if w.Config.RequestDelay > 0 {
+		time.Sleep(w.Config.RequestDelay)
 	}
 
 	// Create HTTP request with custom headers if provided
@@ -85,7 +85,7 @@ func (c *Crawler) crawl(url string) {
 		log.Printf("Error creating HTTP request: %v", err)
 		return
 	}
-	for key, value := range c.Config.CustomHeaders {
+	for key, value := range w.Config.CustomHeaders {
 		req.Header.Set(key, value)
 	}
 
@@ -111,43 +111,43 @@ func (c *Crawler) crawl(url string) {
 	}
 
 	// Save the page to the database
-	database.AddPage(c.JobID, url, title, doc.Text(), metadata)
+	database.AddPage(w.JobID, url, title, doc.Text(), metadata)
 
-	// Save result to the crawler results
-	c.mu.Lock()
-	c.Results = append(c.Results, CrawlResult{
+	// Save result to the worker results
+	w.mu.Lock()
+	w.Results = append(w.Results, WorkerResult{
 		URL:     url,
 		Title:   title,
 		Content: content,
 	})
-	c.mu.Unlock()
+	w.mu.Unlock()
 
 	doc.Find("a").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists {
-			c.mu.Lock()
-			if c.counter >= c.Config.MaxLinks {
-				c.mu.Unlock()
+			w.mu.Lock()
+			if w.counter >= w.Config.MaxLinks {
+				w.mu.Unlock()
 				return
 			}
-			c.mu.Unlock()
+			w.mu.Unlock()
 
-			c.wg.Add(1)
-			go c.crawl(href)
+			w.wg.Add(1)
+			go w.crawl(href)
 		}
 	})
 }
 
 // Counter safely returns the current number of processed links
-func (c *Crawler) Counter() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.counter
+func (w *Worker) Counter() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.counter
 }
 
 // GetStatus returns the current processed count and the maximum number of links.
-func (c *Crawler) GetStatus() (processed int, total int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.counter, c.Config.MaxLinks
+func (w *Worker) GetStatus() (processed int, total int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.counter, w.Config.MaxLinks
 }
