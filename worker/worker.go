@@ -25,6 +25,20 @@ type WorkerConfig struct {
 	CustomHeaders map[string]string // Optional HTTP headers for requests
 }
 
+type WorkerStatusCallback func(jobID uint64, message string)
+
+// NewWorker initializes a new worker instance with custom config
+func NewWorker(jobID uint64, startURL string, config WorkerConfig, cb WorkerStatusCallback) *Worker {
+	return &Worker{
+		visited:  make(map[string]bool),
+		Config:   config,
+		JobID:    jobID,
+		StartURL: startURL,
+		Results:  make([]WorkerResult, 0),
+		StatusCb: cb,
+	}
+}
+
 // Worker struct to manage crawl state
 type Worker struct {
 	mu       sync.Mutex
@@ -32,35 +46,33 @@ type Worker struct {
 	visited  map[string]bool
 	counter  int
 	Config   WorkerConfig
-	JobID    uint
+	JobID    uint64
 	StartURL string
 	Results  []WorkerResult
-}
-
-// NewWorker initializes a new worker instance with custom config
-func NewWorker(jobID uint, startURL string, config WorkerConfig) *Worker {
-	return &Worker{
-		visited:  make(map[string]bool),
-		Config:   config,
-		JobID:    jobID,
-		StartURL: startURL,
-		Results:  make([]WorkerResult, 0),
-	}
+	StatusCb WorkerStatusCallback
 }
 
 // Start begins the crawling process
-func (c *Worker) Start() {
-	log.Printf("Starting crawl job %d for URL: %s", c.JobID, c.StartURL)
-	database.UpdateJobStatus(c.JobID, "in_progress")
+func (w *Worker) Start() {
+	log.Printf("Starting crawl job %d for URL: %s", w.JobID, w.StartURL)
+	database.UpdateJobStatus(w.JobID, "in_progress")
 
-	c.wg.Add(1)
-	go c.crawl(c.StartURL)
-	c.wg.Wait()
+	if w.StatusCb != nil {
+		w.StatusCb(w.JobID, "Job started")
+	}
 
-	database.UpdateJobStatus(c.JobID, "completed")
+	w.wg.Add(1)
+	go w.crawl(w.StartURL)
+	w.wg.Wait()
+
+	if w.StatusCb != nil {
+		w.StatusCb(w.JobID, "Job completed")
+	}
+
+	database.UpdateJobStatus(w.JobID, "completed")
 }
 
-// worker processes a single URL
+// Crawl a single URL and store it in the database
 func (w *Worker) crawl(url string) {
 	defer w.wg.Done()
 
@@ -71,22 +83,17 @@ func (w *Worker) crawl(url string) {
 	}
 	w.visited[url] = true
 	w.counter++
-	log.Printf("Crawling (%d/%d): %s", w.counter, w.Config.MaxLinks, url)
 	w.mu.Unlock()
 
-	// Apply delay if set in configuration
-	if w.Config.RequestDelay > 0 {
-		time.Sleep(w.Config.RequestDelay)
+	// Send progress message
+	if w.StatusCb != nil {
+		w.StatusCb(w.JobID, "Crawling: "+url)
 	}
 
-	// Create HTTP request with custom headers if provided
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Printf("Error creating HTTP request: %v", err)
 		return
-	}
-	for key, value := range w.Config.CustomHeaders {
-		req.Header.Set(key, value)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -110,17 +117,8 @@ func (w *Worker) crawl(url string) {
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 
-	// Save the page to the database
-	database.AddPage(w.JobID, url, title, doc.Text(), metadata)
-
-	// Save result to the worker results
-	w.mu.Lock()
-	w.Results = append(w.Results, WorkerResult{
-		URL:     url,
-		Title:   title,
-		Content: content,
-	})
-	w.mu.Unlock()
+	// Store page in database
+	database.AddPage(w.JobID, url, title, content, metadata)
 
 	doc.Find("a").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
@@ -136,13 +134,6 @@ func (w *Worker) crawl(url string) {
 			go w.crawl(href)
 		}
 	})
-}
-
-// Counter safely returns the current number of processed links
-func (w *Worker) Counter() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.counter
 }
 
 // GetStatus returns the current processed count and the maximum number of links.

@@ -10,13 +10,14 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var DB *gorm.DB
 
 // Job represents a scheduled crawling task
 type Job struct {
-	ID          uint       `gorm:"primaryKey"`
+	ID          uint64     `gorm:"primaryKey"`
 	Status      string     `gorm:"type:varchar(20);default:'queued'"` // queued, in_progress, completed, failed
 	Priority    int        `gorm:"default:1"`                         // 1 = low, 2 = medium, 3 = high
 	CreatedAt   time.Time  `gorm:"autoCreateTime"`
@@ -28,7 +29,7 @@ type Job struct {
 // Page represents a crawled webpage
 type Page struct {
 	ID        uint   `gorm:"primaryKey"`
-	JobID     uint   `gorm:"index"` // Foreign key to jobs
+	JobID     uint64 `gorm:"index"` // Foreign key to jobs
 	URL       string `gorm:"unique"`
 	Title     string
 	Content   string         `gorm:"type:text"`
@@ -45,7 +46,9 @@ func InitDatabase() {
 	}
 
 	var err error
-	DB, err = gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
+	DB, err = gorm.Open(postgres.Open(databaseURL), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -67,7 +70,7 @@ func CreateJob(priority int) (*Job, error) {
 }
 
 // GetJob retrieves a job by ID
-func GetJob(jobID uint) (*Job, error) {
+func GetJob(jobID uint64) (*Job, error) {
 	var job Job
 	if err := DB.Preload("Pages").First(&job, jobID).Error; err != nil {
 		return nil, err
@@ -85,11 +88,11 @@ func GetAllJobs() ([]Job, error) {
 }
 
 // UpdateJobStatus updates the job's status
-func UpdateJobStatus(jobID uint, status string) error {
+func UpdateJobStatus(jobID uint64, status string) error {
 	return DB.Model(&Job{}).Where("id = ?", jobID).Update("status", status).Error
 }
 
-func AddPage(jobID uint, url, title, content string, metadata map[string]interface{}) error {
+func AddPage(jobID uint64, url, title, content string, metadata map[string]interface{}) error {
 	metadataJSON, err := json.Marshal(metadata) // Convert map to JSON
 	if err != nil {
 		return err

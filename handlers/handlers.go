@@ -1,153 +1,123 @@
 package handlers
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
-	"worker/database"
-	"worker/worker"
+	"worker/jobs"
 
 	"github.com/gin-gonic/gin"
+	pb "github.com/prorobot-ai/grpc-protos/gen/crawler"
+	"google.golang.org/grpc"
 )
 
-// JobStatus represents the status of a crawl job.
-type JobStatus struct {
-	JobID     uint   `json:"job_id"`
-	Status    string `json:"status"`
-	Processed int    `json:"processed"`
-	Total     int    `json:"total"`
-}
-
-// 🏃 Active workers in memory
-var activeWorkers sync.Map // map[string]*worker.Worker
-
-// StartWorkerHandler starts a new crawling job.
+// StartWorkerHandler starts a new job
 func StartWorkerHandler(c *gin.Context) {
 	var request struct {
 		URL   string `json:"url"`
 		Depth int    `json:"depth"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	jobID, err := jobs.HireCrawler(request.URL, request.Depth)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"job_id": jobID})
+}
+
+func StartGRPCWorkerHandler(c *gin.Context) {
+	var request struct {
+		URL string `json:"url"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
 		return
 	}
 
-	job, err := database.CreateJob(1) // Default priority
+	// Connect to gRPC server
+	conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job"})
+		log.Fatalf("Failed to connect to gRPC server: %v", err)
+	}
+	defer conn.Close()
+
+	client := pb.NewCrawlerServiceClient(conn)
+
+	// Call gRPC StartCrawl
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	jobID := uint64(time.Now().Unix())        // Get the current Unix timestamp as uint64
+	jobIDStr := strconv.FormatUint(jobID, 10) // Convert uint64 to string
+
+	resp, err := client.StartCrawl(ctx, &pb.CrawlRequest{Url: request.URL, JobId: jobIDStr})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start crawl job"})
 		return
 	}
 
-	config := worker.WorkerConfig{
-		MaxLinks:     64,
-		RequestDelay: 0 * time.Second, // 360 * time.Second
-		CustomHeaders: map[string]string{
-			"User-Agent": "ProRobot/1.0",
-		},
-	}
+	log.Println(resp)
 
-	newWorker := worker.NewWorker(job.ID, request.URL, config)
-	activeWorkers.Store(job.ID, newWorker)
-	go func() {
-		newWorker.Start()
-		activeWorkers.Delete(job.ID)
-	}()
-
-	c.JSON(http.StatusCreated, gin.H{"job_id": job.ID})
+	c.JSON(http.StatusCreated, gin.H{"job_id": jobIDStr})
 }
 
-// JobStatusHandler returns the status of a specific job.
+// JobStatusHandler returns the status of a job
 func JobStatusHandler(c *gin.Context) {
-	jobID, err := strconv.Atoi(c.Param("id"))
+	jobID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
 		return
 	}
 
-	if val, exists := activeWorkers.Load(uint(jobID)); exists {
-		cr := val.(*worker.Worker)
-		processed, total := cr.GetStatus()
-		c.JSON(http.StatusOK, JobStatus{JobID: uint(jobID), Status: "running", Processed: processed, Total: total})
-		return
-	}
-
-	job, err := database.GetJob(uint(jobID))
+	status, processed, total, err := jobs.GetJobStatus(jobID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		return
 	}
 
-	c.JSON(http.StatusOK, JobStatus{JobID: job.ID, Status: job.Status, Processed: len(job.Pages), Total: len(job.Pages)})
-}
-
-// JobResultsHandler returns the results of a completed job.
-func JobResultsHandler(c *gin.Context) {
-	jobID, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-		return
-	}
-
-	job, err := database.GetJob(uint(jobID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, job.Pages)
-}
-
-// ListJobsHandler returns a list of all jobs, combining both active and completed jobs.
-func ListJobsHandler(c *gin.Context) {
-	var jobs []JobStatus // List to hold all job statuses (active + completed)
-
-	// ✅ Step 1: Track active jobs (workers)
-	activeJobIDs := make(map[uint]bool) // Tracks active job IDs (as strings)
-
-	// Iterate over the active workers
-	activeWorkers.Range(func(key, value interface{}) bool {
-		jobID := key.(uint)                // Extract the job ID from the key
-		cr := value.(*worker.Worker)       // Type assertion to get the Worker instance
-		processed, total := cr.GetStatus() // Get current crawling status from the Worker
-
-		// Add active job details
-		jobs = append(jobs, JobStatus{
-			JobID:     jobID,
-			Status:    "in_progress",
-			Processed: processed,
-			Total:     total,
-		})
-
-		activeJobIDs[jobID] = true // Track active job IDs to avoid duplication
-		return true                // Continue iterating through the map
+	c.JSON(http.StatusOK, jobs.JobStatus{
+		JobID:     jobID,
+		Status:    status,
+		Processed: processed,
+		Total:     total,
 	})
+}
 
-	// ✅ Step 2: Fetch completed jobs from the database
-	dbJobs, err := database.GetAllJobs()
-	if err == nil {
-		for _, job := range dbJobs {
-			// 🚫 Skip jobs that are already active
-			if activeJobIDs[job.ID] {
-				continue
-			}
-
-			// Add completed job from the database
-			jobs = append(jobs, JobStatus{
-				JobID:     job.ID,
-				Status:    job.Status,
-				Processed: len(job.Pages), // Assuming `Pages` stores crawled results
-				Total:     len(job.Pages),
-			})
-		}
-	} else {
-		// ❌ Handle database fetch errors
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch jobs from the database"})
+// ListJobsHandler returns all jobs
+func ListJobsHandler(c *gin.Context) {
+	jobsList, err := jobs.ListJobs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch jobs"})
 		return
 	}
 
-	// ✅ Step 3: Return the combined job list as JSON
-	c.JSON(http.StatusOK, jobs)
+	c.JSON(http.StatusOK, jobsList)
+}
+
+// JobResultsHandler returns the results of a completed job
+func JobResultsHandler(c *gin.Context) {
+	jobID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
+		return
+	}
+
+	results, err := jobs.GetJobResults(jobID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, results)
 }
 
 // StatusHandler returns the status of the API
