@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"worker/database"
 	"worker/jobs"
 
 	"github.com/gin-gonic/gin"
@@ -118,6 +119,31 @@ func JobResultsHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, results)
+}
+
+// DeleteJobHandler removes a job and its associated data
+func DeleteJobHandler(c *gin.Context) {
+	jobID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
+		return
+	}
+
+	// Check if job is running and cancel if necessary
+	if worker, exists := jobs.GetJob(jobID); exists {
+		worker.Cancel()       // Stop the worker
+		jobs.RemoveJob(jobID) // Remove after canceling
+		log.Printf("🛑 Job %d canceled and removed", jobID)
+	}
+
+	// Delete job from the database
+	if err := database.DeleteJob(jobID); err != nil {
+		log.Printf("❌ Failed to delete job %d from database: %v", jobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete job"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Job deleted successfully", "job_id": jobID})
 }
 
 // StatusHandler returns the status of the API

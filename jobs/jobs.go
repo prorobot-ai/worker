@@ -27,12 +27,12 @@ func HireCrawler(url string, depth int) (uint64, error) {
 	}
 
 	newWorker := worker.NewWorker(job.ID, url, config, nil)
-	activeWorkers.Store(job.ID, newWorker)
+	StoreJob(job.ID, newWorker)
 
 	// Run the worker in a goroutine
 	go func() {
 		newWorker.Start()
-		activeWorkers.Delete(job.ID)
+		RemoveJob(job.ID)
 	}()
 
 	return job.ID, nil
@@ -106,6 +106,25 @@ func GetJobResults(jobID uint64) ([]database.Page, error) {
 		return nil, err
 	}
 	return job.Pages, nil
+}
+
+// StoreJob registers a new worker
+func StoreJob(jobID uint64, w *worker.Worker) {
+	activeWorkers.Store(jobID, w)
+}
+
+// GetJob retrieves a running job
+func GetJob(jobID uint64) (*worker.Worker, bool) {
+	val, exists := activeWorkers.Load(jobID)
+	if !exists {
+		return nil, false
+	}
+	return val.(*worker.Worker), true
+}
+
+// RemoveJob removes a completed or canceled job
+func RemoveJob(jobID uint64) {
+	activeWorkers.Delete(jobID)
 }
 
 // JobStatus struct for API response

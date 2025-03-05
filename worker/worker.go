@@ -3,6 +3,8 @@ package worker
 import (
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,10 +27,23 @@ type WorkerConfig struct {
 	CustomHeaders map[string]string // Optional HTTP headers for requests
 }
 
+// WorkerStatusCallback defines a function signature for status reporting.
 type WorkerStatusCallback func(jobID uint64, message string)
+
+// Cancel stops the worker immediately
+func (w *Worker) Cancel() {
+	w.mu.Lock()
+	w.canceled = true
+	w.mu.Unlock()
+}
 
 // NewWorker initializes a new worker instance with custom config
 func NewWorker(jobID uint64, startURL string, config WorkerConfig, cb WorkerStatusCallback) *Worker {
+	parsedURL, err := url.Parse(startURL)
+	if err != nil {
+		log.Fatalf("Invalid start URL: %v", err)
+	}
+
 	return &Worker{
 		visited:  make(map[string]bool),
 		Config:   config,
@@ -36,6 +51,7 @@ func NewWorker(jobID uint64, startURL string, config WorkerConfig, cb WorkerStat
 		StartURL: startURL,
 		Results:  make([]WorkerResult, 0),
 		StatusCb: cb,
+		Host:     parsedURL.Host, // Store the base domain to filter links
 	}
 }
 
@@ -50,6 +66,8 @@ type Worker struct {
 	StartURL string
 	Results  []WorkerResult
 	StatusCb WorkerStatusCallback
+	Host     string // Base host (e.g., "example.com")
+	canceled bool
 }
 
 // Start begins the crawling process
@@ -73,24 +91,30 @@ func (w *Worker) Start() {
 }
 
 // Crawl a single URL and store it in the database
-func (w *Worker) crawl(url string) {
+func (w *Worker) crawl(urlStr string) {
 	defer w.wg.Done()
 
+	// Normalize URL and filter out external domains
+	absoluteURL := w.resolveURL(urlStr)
+	if absoluteURL == "" {
+		return
+	}
+
 	w.mu.Lock()
-	if w.counter >= w.Config.MaxLinks || w.visited[url] {
+	if w.counter >= w.Config.MaxLinks || w.visited[absoluteURL] {
 		w.mu.Unlock()
 		return
 	}
-	w.visited[url] = true
+	w.visited[absoluteURL] = true
 	w.counter++
 	w.mu.Unlock()
 
 	// Send progress message
 	if w.StatusCb != nil {
-		w.StatusCb(w.JobID, "Crawling: "+url)
+		w.StatusCb(w.JobID, "Crawling: "+absoluteURL)
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", absoluteURL, nil)
 	if err != nil {
 		log.Printf("Error creating HTTP request: %v", err)
 		return
@@ -118,22 +142,59 @@ func (w *Worker) crawl(url string) {
 	}
 
 	// Store page in database
-	database.AddPage(w.JobID, url, title, content, metadata)
+	database.AddPage(w.JobID, absoluteURL, title, content, metadata)
 
+	// Store result in WorkerResult
+	w.mu.Lock()
+	w.Results = append(w.Results, WorkerResult{
+		URL:     absoluteURL,
+		Title:   title,
+		Content: content,
+	})
+	w.mu.Unlock()
+
+	// Extract and queue internal links
 	doc.Find("a").Each(func(_ int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists {
-			w.mu.Lock()
-			if w.counter >= w.Config.MaxLinks {
-				w.mu.Unlock()
-				return
+			resolvedURL := w.resolveURL(href)
+			if resolvedURL != "" {
+				w.wg.Add(1)
+				go w.crawl(resolvedURL)
 			}
-			w.mu.Unlock()
-
-			w.wg.Add(1)
-			go w.crawl(href)
 		}
 	})
+}
+
+// **resolveURL ensures that URLs are absolute and belong to the same domain**
+func (w *Worker) resolveURL(href string) string {
+	parsedBase, err := url.Parse(w.StartURL)
+	if err != nil {
+		return ""
+	}
+
+	parsedURL, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+
+	// Convert relative URLs to absolute URLs
+	resolvedURL := parsedBase.ResolveReference(parsedURL)
+
+	// Ignore external domains
+	if resolvedURL.Host != w.Host {
+		return ""
+	}
+
+	// Ignore mailto, tel, javascript, and fragment (#) links
+	if strings.HasPrefix(resolvedURL.String(), "mailto:") ||
+		strings.HasPrefix(resolvedURL.String(), "tel:") ||
+		strings.HasPrefix(resolvedURL.String(), "javascript:") ||
+		strings.Contains(resolvedURL.String(), "#") {
+		return ""
+	}
+
+	return resolvedURL.String()
 }
 
 // GetStatus returns the current processed count and the maximum number of links.

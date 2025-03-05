@@ -35,6 +35,7 @@ func main() {
 		jobRoutes.GET("", handlers.ListJobsHandler)
 		jobRoutes.GET(":id/status", handlers.JobStatusHandler)
 		jobRoutes.GET(":id/results", handlers.JobResultsHandler)
+		jobRoutes.DELETE(":id", handlers.DeleteJobHandler)
 	}
 
 	// Run both HTTP and gRPC servers concurrently

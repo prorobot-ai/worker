@@ -3,10 +3,9 @@ package server
 import (
 	"context"
 	"log"
-	"strconv"
 	"sync"
-	"time"
 	"worker/database"
+	"worker/jobs"
 	"worker/worker"
 
 	pb "github.com/prorobot-ai/grpc-protos/gen/crawler"
@@ -53,6 +52,8 @@ func (s *CrawlerServer) StartCrawl(req *pb.CrawlRequest, stream pb.CrawlerServic
 	config := worker.WorkerConfig{MaxLinks: 16}
 	newWorker := worker.NewWorker(jobID, req.Url, config, progressCallback)
 
+	jobs.StoreJob(jobID, newWorker)
+
 	// Start worker asynchronously
 	done := make(chan struct{})
 	go func() {
@@ -70,18 +71,20 @@ func (s *CrawlerServer) manageJobLifecycle(jobID uint64, stream pb.CrawlerServic
 		select {
 		case <-ctx.Done():
 			log.Printf("❌ Job %d cancelled due to client disconnection", jobID)
+			jobs.RemoveJob(jobID)
 			return nil // End gRPC safely
 		case <-done:
 			log.Printf("✅ Job %d completed successfully", jobID)
+			jobs.RemoveJob(jobID)
 			return nil // Close gRPC stream
-		case <-time.After(5 * time.Second):
-			err := stream.Send(&pb.CrawlResponse{
-				JobId:   strconv.FormatUint(jobID, 10),
-				Message: "Heartbeat: job still running",
-			})
-			if err != nil {
-				log.Printf("❌ Failed to send heartbeat: %v", err)
-			}
+			// case <-time.After(5 * time.Second):
+			// 	err := stream.Send(&pb.CrawlResponse{
+			// 		JobId:   strconv.FormatUint(jobID, 10),
+			// 		Message: "Heartbeat: job still running",
+			// 	})
+			// 	if err != nil {
+			// 		log.Printf("❌ Failed to send heartbeat: %v", err)
+			// 	}
 		}
 	}
 }

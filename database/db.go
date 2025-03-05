@@ -107,3 +107,24 @@ func AddPage(jobID uint64, url, title, content string, metadata map[string]inter
 	}
 	return DB.Create(page).Error
 }
+
+// DeleteJob removes a job and its associated pages from the database.
+func DeleteJob(jobID uint64) error {
+	// Begin transaction to ensure atomicity
+	tx := DB.Begin()
+
+	// Delete associated pages first
+	if err := tx.Where("job_id = ?", jobID).Delete(&Page{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Delete the job itself
+	if err := tx.Where("id = ?", jobID).Delete(&Job{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Commit transaction
+	return tx.Commit().Error
+}
