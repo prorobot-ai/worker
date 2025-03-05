@@ -30,7 +30,7 @@ type Job struct {
 type Page struct {
 	ID        uint   `gorm:"primaryKey"`
 	JobID     uint64 `gorm:"index"` // Foreign key to jobs
-	URL       string `gorm:"unique"`
+	URL       string
 	Title     string
 	Content   string         `gorm:"type:text"`
 	Metadata  datatypes.JSON `gorm:"type:jsonb"` // Store structured metadata
